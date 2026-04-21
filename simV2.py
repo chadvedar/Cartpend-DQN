@@ -175,7 +175,7 @@ def cal_reward_function(cartPen:CartPendulum):
     reward -= 0.1 * dth**2
     return reward
 
-def epsilon_greedy(step, decay=1000, min_v=0.0, init_v=1.0):
+def epsilon_greedy(step, decay=1000, min_v=0.0, init_v=0.0):
     return min_v + (init_v - min_v)*np.exp(-step/decay)
     
 def control_law(cartPen:CartPendulum, online_nn:DQN, step:int):
@@ -217,6 +217,7 @@ def solve(cartPen:CartPendulum, t_eval:np.ndarray, online_nn:DQN, episode:int):
     cart_pos = [[], []]
     pen1_pos = [[], []]
 
+    reward_per_ep = 0.0
     for i in range(1, len(t_eval)):
         t  = t_eval[i]
         dt = t - t_prev
@@ -230,6 +231,8 @@ def solve(cartPen:CartPendulum, t_eval:np.ndarray, online_nn:DQN, episode:int):
         next_state = get_system_state(cartPen)
         reward = cal_reward_function(cartPen)
         done = is_reach_desired(cartPen)
+
+        reward_per_ep += reward
 
         cart_pos[0].append(cartPen.cart_pos[0][0])
         cart_pos[1].append(cartPen.cart_pos[1][0])
@@ -247,7 +250,7 @@ def solve(cartPen:CartPendulum, t_eval:np.ndarray, online_nn:DQN, episode:int):
     
     plant_buffer.push(cart_pos[0], cart_pos[1], pen1_pos[0], pen1_pos[1])
     print(f"add new record!!, buffer size is {len(plant_buffer)}")
-    return eps
+    return eps, reward_per_ep
 
 def trainDQN(online_nn:DQN,target_nn:DQN,optimizer:tf.keras.optimizers,mem:ReplayMemory,training_batch:int,
              gamma:float=0.8):
@@ -291,14 +294,19 @@ optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
 
 target_nn.set_weights(online_nn.get_weights())
 
+highest_reward = 0.0
 def roll_out(cartPen:CartPendulum, t_eval:np.ndarray):
     global replayMemory, update_nn_step, update_target_nn_step
-    global target_nn, online_nn
+    global target_nn, online_nn, highest_reward
     episode = 0
     while True:
         print(f"-------------- episode : {episode} -------------------")
         cartPen = CartPendulum()
-        eps = solve(cartPen, t_eval, online_nn, episode)
+        eps, reward_per_ep = solve(cartPen, t_eval, online_nn, episode)
+
+        if reward_per_ep > highest_reward:
+            online_nn.save_weights(file_name)
+            highest_reward = reward_per_ep
 
         if len(replayMemory) >= min_training_buffer:
             trainDQN(online_nn, target_nn, optimizer, replayMemory, training_batch)
@@ -308,6 +316,8 @@ def roll_out(cartPen:CartPendulum, t_eval:np.ndarray):
             target_nn.set_weights(online_nn.get_weights())
             update_nn_step = 0
 
+        print(f"reward per episode {reward_per_ep}")
+        print(f"highest recorded reward {highest_reward}")
         print(f"current epsilon {eps}")
         episode += 1
         # time.sleep(1)
